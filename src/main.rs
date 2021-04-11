@@ -1,12 +1,12 @@
-#![feature(once_cell)]
-
 mod ext;
 
-use std::{io, lazy::Lazy, net::SocketAddr};
+use std::{io, net::SocketAddr};
 
 use tokio::{io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt}, net::TcpStream};
 
-const TARGET_ADDR: Lazy<String> = Lazy::new(|| std::env::var("TARGET_ADDR").expect("missing TARGET_ADDR env"));
+lazy_static::lazy_static!{
+    static ref TARGET_ADDR: String = std::env::var("TARGET_ADDR").expect("missing TARGET_ADDR env");
+}
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
