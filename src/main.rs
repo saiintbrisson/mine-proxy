@@ -1,8 +1,16 @@
-mod ext;
+#[macro_use]
+extern crate async_trait;
+#[macro_use]
+extern crate log;
+
+mod packet;
+mod tokio_ext;
 
 use std::{io, net::SocketAddr, sync::Arc};
 
-use tokio::{io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt}, net::TcpStream};
+use packet::{InboundPacket, OutboundPacket};
+use protocol::packets::handshake::{Handshake, NextState};
+use tokio::{io::{AsyncRead, AsyncWrite}, net::TcpStream};
 
 pub struct Server {
     target_addrs: Vec<SocketAddr>,
@@ -12,6 +20,8 @@ pub struct Server {
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
+    env_logger::init_from_env(env_logger::Env::default().default_filter_or("info"));
+
     let addr = std::env::var("TARGET_ADDR").expect("missing TARGET_ADDR env");
     let (raw_addr, raw_port) = parse_addr(&addr);
     
@@ -25,7 +35,7 @@ async fn main() -> io::Result<()> {
         std::env::var("BIND_ADDR").unwrap_or("0.0.0.0:25565".into())
     ).await?;
 
-    println!("listening for connection on {}", listener.local_addr()?);
+    info!("listening for connection on {}", listener.local_addr()?);
 
     while let Ok((stream, addr)) = listener.accept().await {
         let server = server.clone();
@@ -50,7 +60,7 @@ async fn handle_connection(server: Arc<Server>, stream: TcpStream, addr: SocketA
     let server_stream = match TcpStream::connect(&server.target_addrs[..]).await {
         Ok(stream) => stream,
         Err(err) => {
-            eprintln!("{}: Failed to connect to target server: {}", addr, err);
+            warn!("{}: failed to connect to target server: {}", addr, err);
             return;
         },
     };
@@ -58,7 +68,7 @@ async fn handle_connection(server: Arc<Server>, stream: TcpStream, addr: SocketA
 
     match handle_handshake(&server, &addr, &mut c_reader, &mut s_writer).await {
         Err(err) => {
-            eprintln!("{}: Failed to handle handshake: {}", addr, err);
+            warn!("{}: failed to handle handshake: {}", addr, err);
             return;
         },
         _ => {},
@@ -66,50 +76,32 @@ async fn handle_connection(server: Arc<Server>, stream: TcpStream, addr: SocketA
 
     tokio::spawn(async move {
         match tokio::io::copy(&mut c_reader, &mut s_writer).await {
-            Err(err) => eprintln!("{}: Connection (c -> s) ended: {}", addr, err),
+            Err(err) => warn!("{}: connection (c -> s) ended: {}", addr, err),
             _ => {},
         }
     });
 
     match tokio::io::copy(&mut s_reader, &mut c_writer).await {
-        Err(err) => eprintln!("{}: Connection (s -> c) ended: {}", addr, err),
+        Err(err) => warn!("{}: connection (s -> c) ended: {}", addr, err),
         _ => {},
     }
 }
 
 async fn handle_handshake<R, W>(server: &Arc<Server>, addr: &SocketAddr, c_reader: &mut R, s_writer: &mut W) -> io::Result<()>
 where
-    R: AsyncRead + Unpin,
-    W: AsyncWrite + Unpin,
+    R: AsyncRead + Send + Unpin,
+    W: AsyncWrite + Send + Unpin,
 {
-    let size = ext::read_varint(c_reader).await? as usize;
-    let mut payload = vec![0u8; size];
-    if c_reader.read(&mut payload).await? != size {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!("invalid packet len, expected {}", size)
-        ));
+    let mut handshake = Handshake::read(c_reader).await?;
+    trace!("read handshake");
+
+    match handshake.next_state {
+        NextState::Login => info!("{}: is logging in...", addr),
+        NextState::Status => debug!("{}: is querying status...", addr),
     }
 
-    let next_state = *payload.last().ok_or(io::Error::new(
-        io::ErrorKind::InvalidInput,
-        format!("invalid handshake packet")
-    ))?;
+    handshake.server_address = server.target_raw_addr.clone();
+    handshake.server_port = server.target_raw_port;
 
-    if next_state == 2 {
-        println!("{}: is logging in...", addr);
-    }
-
-    let host = server.target_raw_addr.as_bytes();
-
-    let mut payload = Vec::with_capacity(6 + host.len());
-    payload.push(0);
-    payload.push(47);
-    payload.push(host.len() as u8);
-    payload.extend_from_slice(host);
-    payload.extend_from_slice(&server.target_raw_port.to_be_bytes());
-    payload.push(next_state);
-
-    ext::write_varint(payload.len() as i32, s_writer).await?;
-    s_writer.write(&payload).await.map(|_| ())
+    handshake.write(s_writer).await.map(|_| ())
 }
