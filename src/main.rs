@@ -10,7 +10,10 @@ use std::{io, net::SocketAddr, sync::Arc};
 
 use packet::{InboundPacket, OutboundPacket};
 use protocol::packets::handshake::{Handshake, NextState};
-use tokio::{io::{AsyncRead, AsyncWrite}, net::TcpStream};
+use tokio::{
+    io::{AsyncRead, AsyncWrite},
+    net::TcpStream,
+};
 
 pub struct Server {
     target_addrs: Vec<SocketAddr>,
@@ -24,22 +27,21 @@ async fn main() -> io::Result<()> {
 
     let addr = std::env::var("TARGET_ADDR").expect("missing TARGET_ADDR env");
     let (raw_addr, raw_port) = parse_addr(&addr);
-    
+
     let server = Arc::new(Server {
         target_addrs: tokio::net::lookup_host(&addr).await?.collect(),
         target_raw_addr: raw_addr,
         target_raw_port: raw_port,
     });
 
-    let listener = tokio::net::TcpListener::bind(
-        std::env::var("BIND_ADDR").unwrap_or("0.0.0.0:25565".into())
-    ).await?;
+    let listener =
+        tokio::net::TcpListener::bind(std::env::var("BIND_ADDR").unwrap_or("0.0.0.0:25565".into()))
+            .await?;
 
     info!("listening for connection on {}", listener.local_addr()?);
 
     while let Ok((stream, addr)) = listener.accept().await {
-        let server = server.clone();
-        tokio::spawn(handle_connection(server, stream, addr));
+        tokio::spawn(handle_connection(server.clone(), stream, addr));
     }
 
     Ok(())
@@ -49,8 +51,11 @@ fn parse_addr(addr: &str) -> (String, u16) {
     let mut split = addr.splitn(2, ':');
 
     (
-        split.next().expect("invalid target addr").into(), 
-        split.next().map(|port| port.parse().expect("invalid port")).unwrap_or(25565u16)
+        split.next().expect("invalid target addr").into(),
+        split
+            .next()
+            .map(|port| port.parse().expect("invalid port"))
+            .unwrap_or(25565u16),
     )
 }
 
@@ -62,7 +67,7 @@ async fn handle_connection(server: Arc<Server>, stream: TcpStream, addr: SocketA
         Err(err) => {
             warn!("{}: failed to connect to target server: {}", addr, err);
             return;
-        },
+        }
     };
     let (mut s_reader, mut s_writer) = tokio::io::split(server_stream);
 
@@ -70,24 +75,29 @@ async fn handle_connection(server: Arc<Server>, stream: TcpStream, addr: SocketA
         Err(err) => {
             warn!("{}: failed to handle handshake: {}", addr, err);
             return;
-        },
-        _ => {},
+        }
+        _ => {}
     }
 
     tokio::spawn(async move {
         match tokio::io::copy(&mut c_reader, &mut s_writer).await {
             Err(err) => warn!("{}: connection (c -> s) ended: {}", addr, err),
-            _ => {},
+            _ => {}
         }
     });
 
     match tokio::io::copy(&mut s_reader, &mut c_writer).await {
         Err(err) => warn!("{}: connection (s -> c) ended: {}", addr, err),
-        _ => {},
+        _ => {}
     }
 }
 
-async fn handle_handshake<R, W>(server: &Arc<Server>, addr: &SocketAddr, c_reader: &mut R, s_writer: &mut W) -> io::Result<()>
+async fn handle_handshake<R, W>(
+    server: &Arc<Server>,
+    addr: &SocketAddr,
+    c_reader: &mut R,
+    s_writer: &mut W,
+) -> io::Result<()>
 where
     R: AsyncRead + Send + Unpin,
     W: AsyncWrite + Send + Unpin,

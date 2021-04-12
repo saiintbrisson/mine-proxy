@@ -26,8 +26,7 @@ pub trait MineAsyncReadExt: AsyncRead + Unpin {
 }
 
 #[async_trait]
-impl<T> MineAsyncReadExt for T
-where T: AsyncRead + Unpin {}
+impl<T> MineAsyncReadExt for T where T: AsyncRead + Unpin {}
 
 #[async_trait]
 pub trait MineAsyncWriteExt: AsyncWrite + Unpin {
@@ -35,7 +34,7 @@ pub trait MineAsyncWriteExt: AsyncWrite + Unpin {
         loop {
             let byte = (temp & 0x7F) as u8;
             temp >>= 7;
-    
+
             if temp != 0 {
                 self.write_u8(byte | 0x80).await?;
             } else {
@@ -43,11 +42,10 @@ pub trait MineAsyncWriteExt: AsyncWrite + Unpin {
                 break;
             }
         }
-    
+
         Ok(())
     }
 }
 
 #[async_trait]
-impl<T> MineAsyncWriteExt for T
-where T: AsyncWrite + Unpin {}
+impl<T> MineAsyncWriteExt for T where T: AsyncWrite + Unpin {}
